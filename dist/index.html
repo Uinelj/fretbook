@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#19372e">
+  <meta name="theme-color" content="#ece6fa">
   <meta name="description" content="Build guitar chord progressions, write your own fingerings, and print chord sheets.">
   <title>Fretbook · Guitar chord notebook</title>
   <link rel="stylesheet" href="style.css">
@@ -14,8 +14,18 @@
     <div class="brand"><span class="logo" aria-hidden="true"><i></i><i></i><i></i></span><span>Fretbook</span></div>
     <button class="new-song" id="new-song" type="button"><span aria-hidden="true">＋</span> New song</button>
     <details id="library" open>
-      <summary>Song library</summary>
-      <nav id="songs" aria-label="Songs"></nav>
+      <summary>My songs</summary>
+      <nav id="songs" aria-label="My songs"></nav>
+    </details>
+    <details id="songbook">
+      <summary>Songbook</summary>
+      <div class="songbook-body">
+        <label class="sr-only" for="songbook-search">Search by title or composer</label>
+        <input id="songbook-search" type="search" placeholder="Find a song" autocomplete="off">
+        <button class="favourites-filter" id="favourites-filter" type="button" aria-pressed="false"><span aria-hidden="true">★</span> Favourites</button>
+        <nav id="templates" aria-label="Songbook"></nav>
+        <a class="songbook-reference" href="https://www.halleonard.com/bin/MiscRealbksongfndr2018.pdf" target="_blank" rel="noopener">Official Real Book index</a>
+      </div>
     </details>
     <div class="library-footer"><span class="device" aria-hidden="true">◉</span><span>Stored on this device</span></div>
   </aside>
@@ -24,14 +34,35 @@
       <header class="song-header">
         <div class="title-block">
           <p class="eyebrow">GUITAR CHORD NOTEBOOK</p>
-          <div class="title-row"><label class="sr-only" for="song-title">Song title</label><h1 id="print-title"></h1><input id="song-title" maxlength="90" placeholder="Untitled song"><button id="rename-song" class="icon-button pencil" aria-label="Rename song" title="Rename song" type="button">✎</button></div>
+          <div class="title-row"><label class="sr-only" id="edit-title-label" for="song-title">Song title</label><h1 id="print-title"></h1><input id="song-title" maxlength="90" placeholder="Untitled song"><button id="rename-song" class="icon-button pencil" aria-label="Rename song" title="Rename song" type="button">✎</button></div>
+          <p class="song-credit" id="song-credit" hidden></p>
           <p class="song-meta" id="song-meta"></p>
         </div>
-        <button class="secondary print-button" id="print" type="button"><span class="printer" aria-hidden="true"></span> Print sheet</button>
+        <div class="song-header-actions">
+          <button class="secondary print-button" id="print" type="button"><span class="printer" aria-hidden="true"></span> Print sheet</button>
+          <button class="add-card" id="copy-template" type="button" hidden>Copy to My Songs</button>
+          <button class="text-button" id="copy-template-draft" type="button" hidden>Copy earlier edits</button>
+        </div>
       </header>
       <section class="progression" aria-labelledby="progression-title">
-        <div class="section-header"><h2 id="progression-title">Chord progression</h2><span class="tuning">STANDARD TUNING <span>E A D G B E</span></span></div>
+        <div class="section-header">
+          <h2 id="progression-title">Chord progression</h2>
+          <div class="chart-settings"><span class="meter" aria-label="Time signature 4/4">4/4</span><span class="tuning">Standard tuning <span>E A D G B E</span></span></div>
+        </div>
+        <div class="transport" aria-label="Playback controls">
+          <button class="primary play-button" id="play" type="button"><span aria-hidden="true">▶</span> Play</button>
+          <label class="loop-toggle" for="loop"><input id="loop" type="checkbox" aria-label="Loop progression"> Loop</label>
+          <label class="transport-field" for="tempo">Tempo <span class="tempo-input"><input id="tempo" type="number" min="30" max="300" step="1" value="92"><span>BPM</span></span></label>
+          <label class="transport-field" for="instrument">Instrument <select id="instrument"></select></label>
+          <span class="difficulty" id="difficulty" title="Estimated from the tempo, the time between chord changes, and the displayed fingerings" role="status" hidden>Difficulty <strong id="difficulty-level"></strong></span>
+          <p class="transport-status" id="playback-status" role="status" hidden></p>
+        </div>
         <div class="cards" id="cards"></div>
+        <div class="progression-actions">
+          <button class="add-card" id="add-card" type="button"><span aria-hidden="true">+</span> Add chord</button>
+          <label class="close-voicings"><input id="close-voicings" type="checkbox" role="switch"> Close voicings</label>
+          <button class="text-button" id="reset-song-voicings" type="button" hidden>Reset voicings</button>
+        </div>
       </section>
       <section class="editor" aria-labelledby="editor-title" id="editor">
         <div class="editor-heading"><span class="editor-icon" aria-hidden="true">＋</span><div><h2 id="editor-title">Add a chord</h2><p>Look up a chord or enter your own fingering.</p></div></div>
@@ -49,6 +80,22 @@
                 <fieldset><legend>Frets from low E to high E</legend><div id="strings" class="strings"></div></fieldset>
                 <p class="field-tip">Use <strong>x</strong> to mute a string and <strong>0</strong> to play it open.</p>
               </div>
+              <div class="chord-options">
+                <div class="option"><label for="chord-beats">Chord length</label>
+                  <select id="chord-beats">
+                    <option value="4">Whole bar · 4 beats</option>
+                    <option value="2">Half bar · 2 beats</option>
+                    <option value="1">Quarter bar · 1 beat</option>
+                    <option value="0.5">½ beat</option>
+                    <option value="1.5">1½ beats</option>
+                    <option value="2.5">2½ beats</option>
+                    <option value="3">3 beats</option>
+                    <option value="3.5">3½ beats</option>
+                    <option value="6">6 beats</option>
+                    <option value="8">Two bars · 8 beats</option>
+                  </select>
+                </div>
+              </div>
               <p id="chord-error" class="error" role="status" hidden></p>
             </div>
             <div id="preview" class="preview" hidden></div>
@@ -56,8 +103,9 @@
           <div class="entry-actions"><button class="primary" id="submit-chord" type="submit">Add to progression</button><button class="secondary" id="cancel-edit" type="button" hidden>Cancel</button></div>
         </form>
       </section>
-      <footer class="workspace-footer"><span id="save-status" role="status">✓ &nbsp; All changes saved locally</span><button type="button" id="delete-song">Delete song</button></footer>
+      <footer class="workspace-footer" id="workspace-footer"><span id="save-status" role="status">✓ &nbsp; All changes saved locally</span><button type="button" id="delete-song">Delete song</button></footer>
     </div>
+    <article class="print-sheet" id="print-sheet" aria-label="Printable chord sheet"></article>
   </main>
   <dialog id="delete-dialog">
     <form method="dialog">

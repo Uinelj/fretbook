@@ -1,4 +1,6 @@
-import { lookupChord, strings } from './chords.js';
+import { chordVoicings, closeVoicings, estimateDifficulty, lookupChord, strings } from './chords.js';
+import { ChordPlayer, instruments } from './player.js';
+import { songbook } from './songbook.js';
 
 const $ = id => document.getElementById(id);
 const make = (tag, className = '', content = '') => {
@@ -9,23 +11,45 @@ const make = (tag, className = '', content = '') => {
 };
 const createId = () => globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2);
 const storageKey = 'fretbook.v1';
+const beatsPerMeasure = 4;
+const chordBeats = chord => chord.beats ?? beatsPerMeasure;
+const fretText = frets => frets.map(fret => fret < 0 ? 'x' : fret).join(' ');
+const sameFrets = (left, right) => String(left) === String(right);
+const formatBeats = beats => {
+  const whole = Math.floor(beats);
+  const number = beats % 1 ? (whole || '') + '½' : String(whole);
+  return number + (beats <= 1 ? ' beat' : ' beats');
+};
 const displayTitle = song => song.title.trim() || 'Untitled song';
 const newSong = (title = '') => ({ id: createId(), title, chords: [] });
-const example = newSong('Sunday Morning');
-example.chords = ['Am7', 'D7', 'Gmaj7', 'Cmaj7'].map(name => ({ ...lookupChord(name), mode: 'lookup' }));
+const defaultTemplate = songbook.find(entry => entry.id === 'sunday-morning');
 
 function readSongs() {
   try {
     const saved = JSON.parse(localStorage.getItem(storageKey));
-    if (Array.isArray(saved?.songs) && saved.songs.length) return saved;
+    if (Array.isArray(saved?.songs)) return saved;
   } catch {}
-  return { songs: [example], activeId: example.id };
+  return { libraryVersion: 2, songs: [], activeId: null, activeTemplateId: defaultTemplate.id };
 }
 
 const state = readSongs();
-const activeSong = () => state.songs.find(song => song.id === state.activeId) ?? state.songs[0];
+const favourites = new Set(Array.isArray(state.favourites) ? state.favourites : []);
+let favouritesOnly = false;
+let songbookView = null;
+const activeSong = () => songbookView ?? state.songs.find(song => song.id === state.activeId);
 let mode = 'lookup';
 let editedIndex = null;
+let voicingName = null;
+let draftFrets = null;
+let draftVoicingChanged = false;
+let displayedVoicings = [];
+let playbackSegments = [];
+let highlighted;
+let playing = false;
+let playbackRequest = 0;
+const player = new ChordPlayer();
+const templateCharts = new WeakMap();
+const songLevels = new WeakMap();
 
 function save() {
   try {
@@ -54,7 +78,7 @@ function drawDiagram(frets) {
     for (const fret of frets) row.append(make('i', fret === base + offset ? 'finger' : ''));
     board.append(row);
   }
-  diagram.append(board, make('span', 'fret-values', frets.map(fret => fret < 0 ? 'x' : fret).join(' ')));
+  diagram.append(board, make('span', 'fret-values', fretText(frets)));
   return diagram;
 }
 
@@ -62,27 +86,204 @@ function renderLibrary() {
   const nav = $('songs');
   const focused = document.activeElement?.dataset.song;
   nav.replaceChildren();
+  if (!state.songs.length) nav.append(make('p', 'songbook-empty', 'No songs yet.'));
   for (const song of state.songs) {
-    const button = make('button', 'song-link', displayTitle(song));
+    const button = make('button', 'song-link');
     button.type = 'button';
     button.dataset.song = song.id;
+    button.append(make('span', 'difficulty-dot'), make('span', '', displayTitle(song)));
+    if (!songLevels.has(song)) {
+      const frets = song.closeVoicings ? closeVoicings(song.chords) : song.chords.map(chord => chord.frets);
+      songLevels.set(song, estimateDifficulty(playbackSequence(song.chords, frets), song.tempo ?? 92));
+    }
+    updateDifficultyDot(button, songLevels.get(song));
     if (song === activeSong()) button.setAttribute('aria-current', 'true');
-    button.onclick = () => {
-      state.activeId = song.id;
-      resetEditor();
-      render();
-      save();
-    };
+    button.onclick = () => openSong(song.id);
     nav.append(button);
     if (focused === song.id) button.focus();
   }
 }
 
+function updateDifficultyDot(button, level) {
+  const dot = button.querySelector('.difficulty-dot');
+  const description = level ? 'Difficulty ' + level : 'No chords yet';
+  dot.dataset.level = level?.toLowerCase() ?? '';
+  dot.title = description;
+  dot.setAttribute('aria-hidden', 'true');
+  button.setAttribute('aria-description', description);
+}
+
+function templateChart(template) {
+  if (!templateCharts.has(template)) {
+    const chords = template.measures.flatMap(measure => {
+      const names = measure.split(' ');
+      return names.map((name, index) => ({ ...lookupChord(name), mode: 'lookup', beats: names.length === 3 ? (index === 0 ? 2 : 1) : beatsPerMeasure / names.length }));
+    });
+    templateCharts.set(template, { chords, level: estimateDifficulty(chords, template.tempo) });
+  }
+  return templateCharts.get(template);
+}
+
+function openSong(id) {
+  songbookView = null;
+  state.activeId = id;
+  state.activeTemplateId = null;
+  resetEditor();
+  render();
+  save();
+}
+
+function templateSong(template) {
+  return {
+    title: template.title,
+    templateId: template.id,
+    tempo: template.tempo,
+    instrument: template.instrument ?? 'nylon',
+    chords: templateChart(template).chords.map(chord => ({ ...chord }))
+  };
+}
+
+function openTemplate(template) {
+  if (songbookView?.templateId === template.id) return;
+  songbookView = templateSong(template);
+  state.activeId = null;
+  state.activeTemplateId = template.id;
+  resetEditor();
+  render();
+  save();
+}
+
+function copyToLibrary(source) {
+  if (!source) return;
+  const baseTitle = displayTitle(source);
+  let title = baseTitle;
+  let copy = 2;
+  while (state.songs.some(song => displayTitle(song) === title)) title = baseTitle + ' (' + copy++ + ')';
+  const song = { ...source, id: createId(), title, chords: source.chords.map(chord => ({ ...chord })) };
+  state.songs.unshift(song);
+  openSong(song.id);
+  $('song-title').focus();
+}
+
+function sameShapes(chords, originals) {
+  return chords.length === originals.length && chords.every((chord, index) => {
+    const original = originals[index];
+    return chord.name === original.name && chord.mode === original.mode && sameFrets(chord.frets, original.frets);
+  });
+}
+
+function migrateLibrary() {
+  if (state.libraryVersion === 2) return;
+  state.songbookDrafts ??= {};
+  state.songs = state.songs.filter(song => {
+    let template = songbook.find(entry => entry.id === song.templateId);
+    if (!template && !song.templateId && song.title === defaultTemplate.title) {
+      const starter = templateChart(defaultTemplate).chords;
+      if (sameShapes(song.chords, starter) && song.chords.every(chord => chord.beats == null || chord.beats === 2)) template = defaultTemplate;
+    }
+    if (!template) return true;
+
+    const original = templateSong(template);
+    const edited = song.title !== original.title || !sameShapes(song.chords, original.chords) ||
+      song.chords.some((chord, index) => chordBeats(chord) !== chordBeats(original.chords[index])) ||
+      (song.tempo ?? original.tempo) !== original.tempo || (song.instrument ?? original.instrument) !== original.instrument || song.closeVoicings;
+    if (edited) state.songbookDrafts[template.id] = { ...song, templateId: template.id };
+    if (song.id === state.activeId) state.activeTemplateId = template.id;
+    return false;
+  });
+  state.libraryVersion = 2;
+}
+
+function restoreView() {
+  migrateLibrary();
+  const template = songbook.find(entry => entry.id === state.activeTemplateId);
+  if (template || !state.songs.length) {
+    songbookView = templateSong(template ?? defaultTemplate);
+    state.activeTemplateId = songbookView.templateId;
+    state.activeId = null;
+  } else {
+    state.activeTemplateId = null;
+    if (!state.songs.some(song => song.id === state.activeId)) state.activeId = state.songs[0].id;
+  }
+}
+
+function renderSongbook() {
+  const nav = $('templates');
+  const normalize = value => value.normalize('NFD').replace(/[’'\p{Mark}]/gu, '').toLowerCase().replace(/[^\p{Letter}\p{Number}]+/gu, ' ').trim();
+  const words = normalize($('songbook-search').value).split(' ').filter(Boolean);
+  const groups = new Map();
+  nav.replaceChildren();
+  for (const entry of songbook) {
+    if (favouritesOnly && !favourites.has(entry.id)) continue;
+    const description = normalize([entry.title, entry.credit, entry.group].join(' '));
+    if (!words.every(word => description.includes(word))) continue;
+    if (!groups.has(entry.group)) {
+      const section = make('div', 'template-group');
+      section.append(make('h2', '', entry.group));
+      groups.set(entry.group, section);
+      nav.append(section);
+    }
+    const button = make('button', 'template-link');
+    button.type = 'button';
+    button.dataset.template = entry.id;
+    if (songbookView?.templateId === entry.id) button.setAttribute('aria-current', 'true');
+    button.append(make('span', 'difficulty-dot'), make('span', '', entry.title), make('small', '', entry.credit));
+    updateDifficultyDot(button, templateChart(entry).level);
+    button.onclick = () => openTemplate(entry);
+    const row = make('div', 'template-row');
+    row.append(button, favouriteButton(entry));
+    groups.get(entry.group).append(row);
+  }
+  if (!groups.size) {
+    const message = favouritesOnly && !favourites.size ? 'Star a song to keep it here.' : 'No matching songs.';
+    const empty = make('p', 'songbook-empty', message);
+    empty.setAttribute('role', 'status');
+    nav.append(empty);
+  }
+  nav.scrollTop = 0;
+}
+
+function favouriteButton(entry) {
+  const button = make('button', 'template-star');
+  button.type = 'button';
+  button.setAttribute('aria-label', 'Favourite ' + entry.title);
+  const update = () => {
+    const marked = favourites.has(entry.id);
+    button.textContent = marked ? '★' : '☆';
+    button.setAttribute('aria-pressed', String(marked));
+    button.title = marked ? 'Remove from favourites' : 'Add to favourites';
+  };
+  update();
+  button.onclick = () => {
+    const removed = favourites.delete(entry.id);
+    if (!removed) favourites.add(entry.id);
+    state.favourites = [...favourites];
+    save();
+    if (removed && favouritesOnly) {
+      renderSongbook();
+      $('favourites-filter').focus();
+    } else update();
+  };
+  return button;
+}
+
 function updateTitle() {
   const song = activeSong();
   const count = song.chords.length;
+  const measures = Math.ceil(song.chords.reduce((total, chord) => total + chordBeats(chord), 0) / beatsPerMeasure);
   $('print-title').textContent = displayTitle(song);
-  $('song-meta').textContent = count + (count === 1 ? ' chord' : ' chords');
+  $('song-meta').textContent = count + (count === 1 ? ' chord' : ' chords') + ' · ' + measures + (measures === 1 ? ' measure' : ' measures');
+  const template = songbook.find(entry => entry.id === song.templateId);
+  const credit = $('song-credit');
+  credit.hidden = !template;
+  credit.replaceChildren();
+  if (template?.source) {
+    const link = make('a', '', template.credit);
+    link.href = template.source;
+    link.target = '_blank';
+    link.rel = 'noopener';
+    credit.append(link, ' · ' + (template.arrangement ?? 'Guitar arrangement'));
+  } else if (template) credit.textContent = template.credit;
 }
 
 function cardAction(symbol, title, action, disabled = false) {
@@ -95,22 +296,54 @@ function cardAction(symbol, title, action, disabled = false) {
   return button;
 }
 
-function renderCards() {
-  const container = $('cards');
-  const { chords } = activeSong();
-  container.replaceChildren();
-  chords.forEach((chord, index) => {
-    const card = make('article', 'card');
-    card.append(make('h3', '', chord.name), drawDiagram(chord.frets));
-    const actions = make('div', 'card-actions');
+function voicingStepper(lookup, frets, label, choose) {
+  const choices = lookup.voicings;
+  const selected = choices.findIndex(shape => sameFrets(shape, frets));
+  const stepper = make('div', 'voicing-stepper');
+  stepper.setAttribute('role', 'group');
+  stepper.setAttribute('aria-label', 'Voicing for ' + label);
+  const step = direction => {
+    const next = selected === -1 ? (direction > 0 ? 0 : choices.length - 1) : (selected + direction + choices.length) % choices.length;
+    choose(choices[next], direction > 0 ? 2 : 0);
+  };
+  const previous = cardAction('‹', 'Previous voicing for ' + label, () => step(-1), choices.length === 1 && selected === 0);
+  const rank = cardAction(selected < 0 ? 'Saved' : String(selected + 1), 'Reset voicing for ' + label + ' to default', () => choose(choices[0], 1), selected === 0);
+  rank.classList.add('voicing-rank');
+  rank.title = selected < 0 ? 'Saved fingering · reset to default' : 'Voicing ' + (selected + 1) + ' of ' + choices.length + (selected === 0 ? ' · default' : ' · reset to default');
+  if (selected === 0) rank.setAttribute('aria-label', 'Default voicing for ' + label);
+  const caption = make('span', 'voicing-caption', 'Voicing');
+  caption.setAttribute('aria-hidden', 'true');
+  const next = cardAction('›', 'Next voicing for ' + label, () => step(1), choices.length === 1 && selected === 0);
+  stepper.append(caption, previous, rank, next);
+  return stepper;
+}
+
+function renderChord(chord, index, beats, continued, continues) {
+  const card = make('article', continued ? 'card continued' : 'card');
+  const timing = formatBeats(beats) + (continued ? ' · continued' : continues ? ' · continues' : '');
+  const frets = displayedVoicings[index];
+  card.append(make('h4', '', chord.name), make('p', 'chord-length', timing), drawDiagram(frets));
+  if (!continued) {
+    card.dataset.chordIndex = index;
     const name = chord.name + ' at position ' + (index + 1);
+    const lookup = chord.mode === 'lookup' && chordVoicings(chord.name);
+    if (lookup) card.append(voicingStepper(lookup, frets, name, (choice, control) => {
+      chord.frets = choice;
+      chord.pinned = Boolean(activeSong().closeVoicings);
+      updateCards();
+      refreshDraftVoicing(index);
+      focusStepper($('cards').querySelector('[data-chord-index="' + index + '"]'), control);
+    }));
+    if (songbookView) return card;
+    const { chords } = activeSong();
+    const actions = make('div', 'card-actions');
     const move = direction => {
       const next = index + direction;
       [chords[index], chords[next]] = [chords[next], chords[index]];
       if (editedIndex === index) editedIndex = next;
       else if (editedIndex === next) editedIndex = index;
       updateCards();
-      const buttons = container.children[next].querySelectorAll('button');
+      const buttons = $('cards').querySelector('[data-chord-index="' + next + '"]').querySelectorAll('.card-actions button');
       const sameAction = buttons[direction < 0 ? 0 : 1];
       (sameAction.disabled ? buttons[2] : sameAction).focus();
     };
@@ -123,23 +356,216 @@ function renderCards() {
         if (editedIndex === index) resetEditor();
         else if (editedIndex !== null && editedIndex > index) editedIndex -= 1;
         updateCards();
-        (container.children[index].querySelector('button:not(:disabled)') ?? container.lastElementChild).focus();
+        const nextCard = $('cards').querySelector('[data-chord-index="' + Math.min(index, chords.length - 1) + '"]');
+        (nextCard?.querySelector('button:not(:disabled)') ?? $('add-card')).focus();
       })
     );
     card.append(actions);
-    container.append(card);
+  }
+  return card;
+}
+
+function chartMeasures(chords) {
+  const measures = [];
+  let available = 0;
+  chords.forEach((chord, index) => {
+    let remaining = chordBeats(chord);
+    let continued = false;
+    while (remaining > 0) {
+      if (available === 0) {
+        measures.push([]);
+        available = beatsPerMeasure;
+      }
+      const beats = Math.min(remaining, available);
+      measures.at(-1).push({ index, beats, continued, continues: remaining > beats });
+      remaining -= beats;
+      available -= beats;
+      continued = true;
+    }
   });
-  const add = make('button', 'add-card');
-  add.type = 'button';
-  const icon = make('span', '', '+');
-  icon.setAttribute('aria-hidden', 'true');
-  add.append(icon, document.createTextNode('Add chord'));
-  add.onclick = () => {
-    resetEditor();
-    $('chord-name').focus();
-  };
-  container.append(add);
+  return measures;
+}
+
+function renderCards() {
+  stopPlayback();
+  const container = $('cards');
+  const { chords, closeVoicings: useCloseVoicings } = activeSong();
+  displayedVoicings = useCloseVoicings ? closeVoicings(chords) : chords.map(chord => chord.frets);
+  playbackSegments = [];
+  container.replaceChildren();
+  let elapsed = 0;
+  chartMeasures(chords).forEach((parts, measureIndex) => {
+    const measure = make('section', 'measure');
+    const header = make('div', 'measure-header');
+    const track = make('div', 'beat-track');
+    track.setAttribute('aria-hidden', 'true');
+    header.append(make('h3', '', 'Measure ' + (measureIndex + 1)), track);
+    const grid = make('div', 'measure-grid');
+    measure.append(header, grid);
+    container.append(measure);
+    for (const { index, beats, continued, continues } of parts) {
+      const segment = make('span', continued ? 'beat-segment held' : 'beat-segment');
+      segment.style.setProperty('--beat-width', (beats / beatsPerMeasure) * 100 + '%');
+      track.append(segment);
+      const card = renderChord(chords[index], index, beats, continued, continues);
+      grid.append(card);
+      elapsed += beats;
+      playbackSegments.push({ end: elapsed, card, segment });
+    }
+  });
   $('print').disabled = chords.length === 0;
+  $('play').disabled = chords.length === 0;
+  $('close-voicings').checked = Boolean(useCloseVoicings);
+  $('close-voicings').disabled = !useCloseVoicings && (chords.length < 2 || !chords.some(chord => chord.mode === 'lookup'));
+  $('reset-song-voicings').hidden = !useCloseVoicings && !chords.some(chord => chord.mode === 'lookup' && !sameFrets(lookupChord(chord.name)?.frets, chord.frets));
+  updateDifficulty();
+}
+
+function focusStepper(container, control) {
+  const buttons = container.querySelectorAll('.voicing-stepper button');
+  const fallback = container.querySelector('.voicing-stepper button:not(:disabled), .card-actions button:not(:disabled)');
+  (buttons[control]?.disabled ? fallback : buttons[control])?.focus({ preventScroll: true });
+}
+
+function highlightBeat(beat) {
+  const next = playbackSegments.find(segment => beat < segment.end);
+  if (next === highlighted) return;
+  if (highlighted) {
+    highlighted.card.classList.remove('playing');
+    highlighted.segment.classList.remove('playing');
+    highlighted.card.removeAttribute('aria-current');
+  }
+  if (next) {
+    next.card.classList.add('playing');
+    next.segment.classList.add('playing');
+    next.card.setAttribute('aria-current', 'true');
+  }
+  highlighted = next;
+}
+
+function playbackButton(active, message = '') {
+  playing = active;
+  const icon = make('span', '', active ? '■' : '▶');
+  icon.setAttribute('aria-hidden', 'true');
+  $('play').replaceChildren(icon, document.createTextNode(active ? ' Stop' : ' Play'));
+  $('playback-status').textContent = message;
+  $('playback-status').hidden = !message;
+}
+
+function stopPlayback() {
+  playbackRequest += 1;
+  player.stop();
+  highlightBeat(Infinity);
+  playbackButton(false);
+}
+
+function currentTempo() {
+  const input = $('tempo');
+  const entered = Number.isFinite(input.valueAsNumber) ? input.valueAsNumber : activeSong().tempo ?? 92;
+  return Math.min(Number(input.max), Math.max(Number(input.min), Math.round(entered)));
+}
+
+function playbackSequence(chords, frets) {
+  return chords.map((chord, index) => ({ beats: chordBeats(chord), frets: frets[index] }));
+}
+
+function currentSequence() {
+  return playbackSequence(activeSong().chords, displayedVoicings);
+}
+
+function renderPrintSheet() {
+  const song = activeSong();
+  const sheet = $('print-sheet');
+  const header = make('header', 'print-heading');
+  header.append(make('h1', '', displayTitle(song)));
+  const credit = $('song-credit').textContent;
+  if (credit) header.append(make('p', 'print-credit', credit));
+  header.append(make('p', 'print-meta', '4/4  ·  ' + currentTempo() + ' BPM  ·  Standard tuning E A D G B E'));
+  sheet.replaceChildren(header);
+  if (!song.chords.length) {
+    sheet.append(make('p', '', 'No chords yet.'));
+    return;
+  }
+
+  const byName = new Map();
+  const fingerings = [];
+  const voicings = song.chords.map((chord, index) => {
+    if (!byName.has(chord.name)) byName.set(chord.name, []);
+    const variants = byName.get(chord.name);
+    const frets = displayedVoicings[index];
+    const existing = variants.find(variant => sameFrets(variant.frets, frets));
+    if (existing) return existing;
+    const entry = { name: chord.name, frets, number: variants.length + 1 };
+    variants.push(entry);
+    fingerings.push(entry);
+    return entry;
+  });
+  const chordLabel = (tag, className, voicing) => {
+    const label = make(tag, className, voicing.name);
+    if (byName.get(voicing.name).length > 1) label.append(make('sup', '', voicing.number));
+    return label;
+  };
+
+  const measures = chartMeasures(song.chords);
+  const systems = make('div', 'print-systems');
+  for (let start = 0; start < measures.length; start += 4) {
+    const system = make('div', 'print-system');
+    for (const [offset, parts] of measures.slice(start, start + 4).entries()) {
+      const bar = make('div', 'print-bar');
+      const changes = make('div', 'print-changes');
+      bar.append(make('span', 'print-measure-number', start + offset + 1), changes);
+      for (const { index, beats, continued } of parts) {
+        const change = make('div', 'print-change');
+        change.append(chordLabel('strong', 'print-chord-name', voicings[index]));
+        if (beats !== beatsPerMeasure || continued) {
+          change.append(make('small', 'print-duration', (continued ? 'Hold · ' : '') + formatBeats(beats)));
+        }
+        changes.append(change);
+      }
+      system.append(bar);
+    }
+    systems.append(system);
+  }
+  sheet.append(systems);
+
+  const key = make('section', 'print-fingerings');
+  const keyHeading = make('header', 'print-key-heading');
+  keyHeading.append(make('h2', '', 'Guitar fingerings'), make('p', '', displayTitle(song)));
+  key.append(keyHeading);
+  for (let start = 0; start < fingerings.length; start += 6) {
+    const row = make('div', 'print-fingering-row');
+    for (const voicing of fingerings.slice(start, start + 6)) {
+      const shape = make('figure', 'print-fingering');
+      shape.append(chordLabel('figcaption', 'print-chord-name', voicing), drawDiagram(voicing.frets));
+      row.append(shape);
+    }
+    key.append(row);
+  }
+  sheet.append(key);
+}
+
+function updateDifficulty() {
+  const level = estimateDifficulty(currentSequence(), currentTempo());
+  const badge = $('difficulty');
+  badge.hidden = !level;
+  badge.dataset.level = level?.toLowerCase() ?? '';
+  const text = $('difficulty-level');
+  if (text.textContent !== (level ?? '')) text.textContent = level ?? '';
+  songLevels.set(activeSong(), level);
+  const selectedSong = $('songs').querySelector('[aria-current="true"]');
+  if (selectedSong) updateDifficultyDot(selectedSong, level);
+}
+
+function saveTempo() {
+  const tempo = currentTempo();
+  $('tempo').value = tempo;
+  const song = activeSong();
+  if (song.tempo !== tempo) {
+    song.tempo = tempo;
+    save();
+  }
+  updateDifficulty();
+  return tempo;
 }
 
 function updateCards() {
@@ -149,8 +575,20 @@ function updateCards() {
 }
 
 function render() {
+  const browsing = Boolean(songbookView);
   renderLibrary();
+  for (const item of $('templates').querySelectorAll('[data-template]')) {
+    if (item.dataset.template === songbookView?.templateId) item.setAttribute('aria-current', 'true');
+    else item.removeAttribute('aria-current');
+  }
+  for (const id of ['song-title', 'edit-title-label', 'rename-song', 'add-card', 'editor', 'workspace-footer']) $(id).hidden = browsing;
+  $('print-title').classList.toggle('screen-title', browsing);
+  $('copy-template').hidden = !browsing;
+  $('copy-template-draft').hidden = !browsing || !state.songbookDrafts?.[songbookView.templateId];
   $('song-title').value = activeSong().title;
+  $('tempo').value = activeSong().tempo ?? 92;
+  $('instrument').value = activeSong().instrument ?? 'nylon';
+  $('loop').checked = Boolean(activeSong().loop);
   updateTitle();
   renderCards();
 }
@@ -170,11 +608,27 @@ const stringInputs = strings.map((note, index) => {
   return input;
 });
 
+function readVoicing(name) {
+  const lookup = name && chordVoicings(name);
+  if (!lookup) {
+    voicingName = null;
+    return null;
+  }
+  if (voicingName !== lookup.name) {
+    voicingName = lookup.name;
+    const saved = activeSong().chords[editedIndex];
+    draftFrets = saved?.name === lookup.name ? displayedVoicings[editedIndex] ?? saved.frets : lookup.voicings[0];
+    draftVoicingChanged = false;
+  }
+  return { name: lookup.name, frets: draftFrets };
+}
+
 function readChord() {
   const name = $('chord-name').value.trim();
+  const beats = Number($('chord-beats').value);
   if (mode === 'lookup') {
-    const chord = name && lookupChord(name);
-    return chord ? { chord: { ...chord, mode } } : {
+    const chord = readVoicing(name);
+    return chord ? { chord: { ...chord, mode, beats } } : {
       error: name ? 'No fingering found. Check the chord symbol or enter a custom fingering.' : 'Enter a chord name.'
     };
   }
@@ -184,7 +638,7 @@ function readChord() {
   }
   const frets = values.map(value => value === 'x' ? -1 : Number(value));
   if (frets.every(fret => fret < 0)) return { error: 'Enter at least one open or fretted string.' };
-  return { chord: { name: name || 'Custom chord', frets, mode } };
+  return { chord: { name: name || 'Custom chord', frets, mode, beats } };
 }
 
 function preview(showError = false) {
@@ -195,7 +649,21 @@ function preview(showError = false) {
   target.hidden = !chord;
   target.replaceChildren();
   if (chord) target.append(drawDiagram(chord.frets));
+  if (chord?.mode === 'lookup') {
+    target.append(voicingStepper(chordVoicings(chord.name), chord.frets, 'chord preview', (choice, control) => {
+      draftFrets = choice;
+      draftVoicingChanged = true;
+      preview();
+      focusStepper(target, control);
+    }));
+  }
   return chord;
+}
+
+function refreshDraftVoicing(index = editedIndex) {
+  if (index !== editedIndex || editedIndex === null || draftVoicingChanged || mode !== 'lookup') return;
+  voicingName = null;
+  preview();
 }
 
 function setMode(next) {
@@ -210,13 +678,16 @@ function setMode(next) {
 
 function editing(index) {
   editedIndex = index;
+  voicingName = null;
+  draftVoicingChanged = false;
   $('editor-title').textContent = index === null ? 'Add a chord' : 'Edit chord';
   $('submit-chord').textContent = index === null ? 'Add to progression' : 'Save chord';
   $('cancel-edit').hidden = index === null;
 }
 
-function resetEditor() {
+function resetEditor(beats = beatsPerMeasure) {
   $('chord-name').value = '';
+  $('chord-beats').value = beats;
   stringInputs.forEach(input => { input.value = ''; });
   editing(null);
   setMode('lookup');
@@ -226,15 +697,39 @@ function editChord(index) {
   const chord = activeSong().chords[index];
   editing(index);
   $('chord-name').value = chord.name;
+  $('chord-beats').value = chordBeats(chord);
   stringInputs.forEach((input, string) => { input.value = chord.frets[string] < 0 ? 'x' : chord.frets[string]; });
   setMode(chord.mode);
   $('chord-name').focus();
 }
 
 $('lookup-tab').onclick = () => setMode('lookup');
+$('close-voicings').onchange = event => {
+  const song = activeSong();
+  song.closeVoicings = event.target.checked;
+  if (!song.closeVoicings) song.chords.forEach(chord => { delete chord.pinned; });
+  updateCards();
+  refreshDraftVoicing();
+};
+$('reset-song-voicings').onclick = () => {
+  const song = activeSong();
+  song.closeVoicings = false;
+  for (const chord of song.chords) {
+    if (chord.mode !== 'lookup') continue;
+    chord.frets = lookupChord(chord.name)?.frets ?? chord.frets;
+    delete chord.pinned;
+  }
+  updateCards();
+  refreshDraftVoicing();
+  ($('close-voicings').disabled ? $(songbookView ? 'copy-template' : 'add-card') : $('close-voicings')).focus({ preventScroll: true });
+};
+$('add-card').onclick = () => {
+  resetEditor(Number($('chord-beats').value));
+  $('chord-name').focus();
+};
 $('custom-tab').onclick = () => {
   if (mode === 'lookup') {
-    const current = lookupChord($('chord-name').value);
+    const current = readVoicing($('chord-name').value);
     if (current) stringInputs.forEach((input, string) => { input.value = current.frets[string] < 0 ? 'x' : current.frets[string]; });
   }
   setMode('custom');
@@ -252,9 +747,16 @@ $('chord-form').onsubmit = event => {
   const chord = preview(true);
   if (!chord) return;
   const chords = activeSong().chords;
+  const previous = chords[editedIndex];
+  if (chord.mode === 'lookup' && previous?.mode === 'lookup' && previous.name === chord.name && !draftVoicingChanged) {
+    chord.frets = previous.frets;
+    if (previous.pinned) chord.pinned = true;
+  } else if (chord.mode === 'lookup' && draftVoicingChanged && activeSong().closeVoicings) {
+    chord.pinned = true;
+  }
   if (editedIndex === null) chords.push(chord);
   else chords[editedIndex] = chord;
-  resetEditor();
+  resetEditor(chord.beats);
   updateCards();
   $('chord-name').focus({ preventScroll: true });
 };
@@ -267,16 +769,48 @@ $('song-title').oninput = event => {
 };
 $('song-title').onkeydown = event => { if (event.key === 'Enter') event.target.blur(); };
 $('rename-song').onclick = () => { $('song-title').focus(); $('song-title').select(); };
+$('copy-template').onclick = () => copyToLibrary(songbookView);
+$('copy-template-draft').onclick = () => copyToLibrary(state.songbookDrafts?.[songbookView?.templateId]);
 $('new-song').onclick = () => {
   const song = newSong();
   state.songs.unshift(song);
-  state.activeId = song.id;
-  resetEditor();
-  render();
-  save();
+  openSong(song.id);
   $('song-title').focus();
 };
+$('tempo').oninput = updateDifficulty;
+$('tempo').onchange = () => { stopPlayback(); saveTempo(); };
+$('loop').onchange = event => {
+  activeSong().loop = event.target.checked;
+  save();
+};
+$('instrument').onchange = event => {
+  stopPlayback();
+  activeSong().instrument = event.target.value;
+  save();
+};
+$('play').onclick = async () => {
+  if (playing) return stopPlayback();
+  const request = ++playbackRequest;
+  const sequence = currentSequence();
+  const tempo = saveTempo();
+  playbackButton(true, 'Loading instrument…');
+  try {
+    await player.play(sequence, {
+      tempo,
+      instrument: $('instrument').value,
+      isLooping: () => $('loop').checked,
+      onStart: () => playbackButton(true),
+      onBeat: highlightBeat,
+      onEnd: stopPlayback
+    });
+  } catch {
+    if (request !== playbackRequest) return;
+    stopPlayback();
+    playbackButton(false, 'Could not load the instrument. Try playing again.');
+  }
+};
 $('print').onclick = () => window.print();
+addEventListener('beforeprint', renderPrintSheet);
 $('delete-song').onclick = () => {
   $('delete-description').textContent = '“' + displayTitle(activeSong()) + '” and its chords will be deleted from this browser.';
   $('delete-dialog').returnValue = 'cancel';
@@ -285,12 +819,27 @@ $('delete-song').onclick = () => {
 $('delete-dialog').onclose = () => {
   if ($('delete-dialog').returnValue !== 'delete') return;
   state.songs = state.songs.filter(song => song !== activeSong());
-  if (!state.songs.length) state.songs.push(newSong());
-  state.activeId = state.songs[0].id;
-  resetEditor();
-  render();
-  save();
-  $('song-title').focus();
+  if (state.songs.length) {
+    openSong(state.songs[0].id);
+    $('song-title').focus();
+  } else {
+    openTemplate(defaultTemplate);
+    $('new-song').focus();
+  }
 };
+for (const [value, label] of Object.entries(instruments)) {
+  const option = make('option', '', label);
+  option.value = value;
+  $('instrument').append(option);
+}
+restoreView();
+renderSongbook();
+$('songbook-search').oninput = renderSongbook;
+$('favourites-filter').onclick = event => {
+  favouritesOnly = !favouritesOnly;
+  event.currentTarget.setAttribute('aria-pressed', String(favouritesOnly));
+  renderSongbook();
+};
+$('songbook').open = matchMedia('(min-width: 781px)').matches;
 render();
 save();

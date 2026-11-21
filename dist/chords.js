@@ -7,11 +7,13 @@ const qualities = {
   '6': [0, 4, 7, 9], m6: [0, 3, 7, 9], '7': [0, 4, 7, 10],
   maj7: [0, 4, 7, 11], m7: [0, 3, 7, 10], mMaj7: [0, 3, 7, 11],
   m7b5: [0, 3, 6, 10], dim7: [0, 3, 6, 9], '7b5': [0, 4, 6, 10], '7#5': [0, 4, 8, 10],
+  '7#11': [0, 4, 7, 10, 6], '7#5#9': [0, 4, 8, 10, 3], '7b13': [0, 4, 7, 10, 8],
   add9: [0, 4, 7, 2], madd9: [0, 3, 7, 2], add11: [0, 4, 7, 5],
   '9': [0, 4, 7, 10, 2], maj9: [0, 4, 7, 11, 2], m9: [0, 3, 7, 10, 2],
   '7b9': [0, 4, 7, 10, 1], '7#9': [0, 4, 7, 10, 3], '6/9': [0, 4, 7, 9, 2],
   '11': [0, 4, 7, 10, 2, 5], m11: [0, 3, 7, 10, 2, 5],
-  '13': [0, 4, 7, 10, 2, 5, 9], maj13: [0, 4, 7, 11, 2, 5, 9], m13: [0, 3, 7, 10, 2, 5, 9]
+  '13': [0, 4, 7, 10, 2, 5, 9], maj13: [0, 4, 7, 11, 2, 5, 9], m13: [0, 3, 7, 10, 2, 5, 9],
+  '13#11': [0, 4, 7, 10, 2, 6, 9]
 };
 const aliases = {
   maj: '', major: '', M: '', min: 'm', minor: 'm', '-': 'm', sus: 'sus4', '+': 'aug', o: 'dim',
@@ -27,8 +29,14 @@ const familiar = {
   Cmaj7: 'x32000', Fmaj7: 'xx3210', Gmaj7: '320002', Asus4: 'x02230', 'D/F#': '2x0232'
 };
 const pitch = (name, accidental) => (notes[name.toUpperCase()] + (accidental === '#' ? 1 : accidental === 'b' ? -1 : 0) + 12) % 12;
+const voicingCache = new Map();
 
 export function lookupChord(input) {
+  const chord = chordVoicings(input);
+  return chord ? { name: chord.name, frets: chord.voicings[0] } : null;
+}
+
+export function chordVoicings(input) {
   const clean = input.trim().replace(/♯/g, '#').replace(/♭/g, 'b').replace(/[\s()]/g, '');
   const parsed = /^([a-g])([#b]?)(.*?)(?:\/([a-g])([#b]?))?$/i.exec(clean);
   if (!parsed) return null;
@@ -37,22 +45,31 @@ export function lookupChord(input) {
   const quality = Object.hasOwn(aliases, suffix) ? aliases[suffix] : aliases[lower] ?? (suffix === 'mMaj7' ? suffix : lower);
   if (!Object.hasOwn(qualities, quality)) return null;
   const name = letter.toUpperCase() + sharp + quality + (bassLetter ? '/' + bassLetter.toUpperCase() + bassAlteration : '');
-  if (Object.hasOwn(familiar, name)) return { name, frets: [...familiar[name]].map(fret => fret === 'x' ? -1 : Number(fret)) };
+  if (voicingCache.has(name)) return voicingCache.get(name);
   const root = pitch(letter, sharp);
   const bass = bassLetter ? pitch(bassLetter, bassAlteration) : root;
   const intervals = qualities[quality];
   const chordNotes = intervals.map(interval => (root + interval) % 12);
   const required = intervals.filter(interval => {
     if (intervals.length >= 5 && interval === 7) return false;
+    if (quality === '13#11' && interval === 2) return false;
     return !(quality.endsWith('13') && (interval === 5 || interval === 2));
   }).map(interval => (root + interval) % 12);
-  const frets = findVoicing(bass, chordNotes, required);
-  return frets ? { name, frets } : null;
+  const voicings = findVoicings(bass, chordNotes, required);
+  if (Object.hasOwn(familiar, name)) {
+    const preferred = [...familiar[name]].map(fret => fret === 'x' ? -1 : Number(fret));
+    const existing = voicings.findIndex(frets => String(frets) === String(preferred));
+    if (existing >= 0) voicings.splice(existing, 1);
+    voicings.unshift(preferred);
+  }
+  const result = voicings.length ? { name, voicings } : null;
+  if (voicingCache.size >= 128) voicingCache.delete(voicingCache.keys().next().value);
+  voicingCache.set(name, result);
+  return result;
 }
 
-function findVoicing(bass, chordNotes, required) {
-  let best = null;
-  let bestScore = Infinity;
+function findVoicings(bass, chordNotes, required) {
+  const candidates = new Map();
   const allowed = new Set([...chordNotes, bass]);
   for (let start = 1; start <= 13; start += 1) {
     const choices = tuning.map(open => [-1, 0, start, start + 1, start + 2, start + 3]
@@ -75,7 +92,8 @@ function findVoicing(bass, chordNotes, required) {
         if (barre && current.some((fret, index) => fret === 0 && index > current.indexOf(first) && index < current.lastIndexOf(first))) return;
         const score = first * .63 + span * 1.3 + fingers * .62 + muted * .72 + gaps * 1.4
           + (first > 4 ? open * 2.5 : -open * .25) + (chordNotes.every(note => seen.has(note)) ? 0 : 1.5);
-        if (score < bestScore) { best = [...current]; bestScore = score; }
+        const key = String(current);
+        if (!candidates.has(key)) candidates.set(key, { frets: [...current], score, first });
         return;
       }
       for (const fret of choices[string]) {
@@ -88,5 +106,90 @@ function findVoicing(bass, chordNotes, required) {
     };
     visit(0, new Set());
   }
-  return best;
+  const ranked = [...candidates.values()].sort((left, right) => left.score - right.score);
+  const perPosition = new Map();
+  return ranked.filter(({ first }, index) => {
+    const count = perPosition.get(first) ?? 0;
+    perPosition.set(first, count + 1);
+    return index < 8 || count < 2;
+  }).map(({ frets }) => frets);
+}
+
+function handPosition(frets) {
+  const pressed = frets.filter(fret => fret > 0);
+  return pressed.length ? (Math.min(...pressed) + Math.max(...pressed)) / 2 : 1;
+}
+
+function movement(from, to) {
+  let cost = 3 * Math.abs(handPosition(from) - handPosition(to));
+  for (let string = 0; string < from.length; string += 1) {
+    if (from[string] === to[string]) continue;
+    cost += from[string] > 0 && to[string] > 0 ? 1 + Math.abs(from[string] - to[string]) : 1;
+  }
+  return cost;
+}
+
+function shapeEffort(frets) {
+  const pressed = frets.filter(fret => fret > 0);
+  if (pressed.length < 2) return 0;
+  const lowest = Math.min(...pressed);
+  const span = Math.max(...pressed) - lowest;
+  const first = frets.indexOf(lowest);
+  const last = frets.lastIndexOf(lowest);
+  const wideBarre = last - first >= 3 && !frets.slice(first, last).includes(0);
+  return .7 * span + .5 * Math.max(0, pressed.length - 2) + (wideBarre ? 1.2 : 0);
+}
+
+export function estimateDifficulty(sequence, tempo) {
+  if (!sequence.length) return null;
+  let peakEffort = 0;
+  let previous;
+  let heldBeats = 0;
+  for (const chord of sequence) {
+    const shape = shapeEffort(chord.frets);
+    peakEffort = Math.max(peakEffort, shape);
+    if (previous) {
+      const shift = movement(previous, chord.frets);
+      if (shift === 0) {
+        heldBeats += chord.beats;
+        continue;
+      }
+      const secondsToPrepare = heldBeats * 60 / tempo;
+      const transition = (.24 * shift + .7) / Math.sqrt(secondsToPrepare) + .3 * shape;
+      peakEffort = Math.max(peakEffort, transition);
+    }
+    previous = chord.frets;
+    heldBeats = chord.beats;
+  }
+  return peakEffort >= 6.5 ? 'Hard' : peakEffort >= 3.2 ? 'Medium' : 'Easy';
+}
+
+export function closeVoicings(chords) {
+  if (!chords.length) return [];
+  const rows = [];
+  for (const chord of chords) {
+    const alternatives = chord.mode === 'lookup' && !chord.pinned ? chordVoicings(chord.name)?.voicings ?? [] : [];
+    const choices = [chord.frets, ...alternatives.filter(frets => String(frets) !== String(chord.frets))];
+    const previous = rows.at(-1);
+    rows.push(choices.map((frets, choice) => {
+      const changed = Number(choice !== 0);
+      if (!previous) return { frets, cost: 0, changes: changed, previous: null };
+      let best = null;
+      for (const from of previous) {
+        const cost = from.cost + movement(from.frets, frets);
+        const changes = from.changes + changed;
+        if (!best || cost < best.cost || (cost === best.cost && changes < best.changes)) {
+          best = { frets, cost, changes, previous: from };
+        }
+      }
+      return best;
+    }));
+  }
+  const result = [];
+  let best = rows.at(-1).reduce((left, right) => left.cost < right.cost || (left.cost === right.cost && left.changes <= right.changes) ? left : right);
+  while (best) {
+    result.push(best.frets);
+    best = best.previous;
+  }
+  return result.reverse();
 }
