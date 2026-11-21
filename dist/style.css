@@ -27,7 +27,7 @@ body {
   background-image: linear-gradient(#7562870c 1px, transparent 1px), linear-gradient(90deg, #7562870c 1px, transparent 1px);
   background-size: 18px 18px;
 }
-button, input, select { font: inherit; }
+button, input, select, textarea { font: inherit; }
 button { cursor: pointer; color: inherit; }
 button:disabled { opacity: .42; cursor: default; }
 button, input, select { outline-offset: 3px; }
@@ -119,6 +119,9 @@ main { min-width: 0; }
 #print-title.screen-title { display: block; overflow-wrap: anywhere; }
 .song-meta, .song-credit { margin: .45rem 0 0; color: var(--muted); font-size: .875rem; }
 .song-credit a { color: var(--purple); text-underline-offset: .18em; }
+.song-byline { display: flex; align-items: baseline; gap: .45rem; margin-top: .35rem; font-size: .875rem; color: var(--muted); }
+.song-byline input { min-width: 0; width: min(100%, 21rem); padding: .24rem .35rem; border: 1px solid #d6c5df; border-radius: 4px; background: #fffafd; color: var(--ink); }
+.song-byline input::placeholder { color: var(--muted); }
 .secondary, .primary, .add-card { display: inline-flex; align-items: center; justify-content: center; gap: .45rem; border: 1px solid #bcabc7; border-radius: 6px; background: linear-gradient(#fff, #f2eaf8); color: var(--plum); padding: .58rem .78rem; font-size: .875rem; font-weight: 700; white-space: nowrap; }
 .secondary:hover:enabled { background: #f6e6f0; }
 .primary { color: #fff; background: linear-gradient(#734c97, #563476); border-color: #4e2e6a; }
@@ -241,6 +244,16 @@ fieldset { margin: .66rem 0 0; padding: 0; border: 0; min-width: 0; }
 .workspace-footer button { background: none; border: 0; text-decoration: underline; text-underline-offset: .18em; padding: .45rem .15rem; }
 dialog { width: min(90vw, 27rem); border: 1px solid #d0b8d3; border-radius: 8px; background: var(--paper); color: var(--ink); padding: 1.3rem; }
 dialog::backdrop { background: #35203f80; }
+.submission-dialog { width: min(94vw, 34rem); max-height: calc(100dvh - 1rem); }
+.submission-dialog p { font-size: .875rem; }
+.submission-fields { display: grid; gap: .33rem; }
+.submission-fields label:not(:first-child) { margin-top: .28rem; }
+.submission-fields label span { font-weight: 400; color: var(--muted); }
+.submission-dialog textarea { display: block; resize: vertical; width: 100%; padding: .45rem .55rem; border: 1px solid #c9b2ce; border-radius: 5px; background: #fffdfb; color: var(--ink); }
+.submission-preview { margin-top: .7rem; color: var(--plum); font-size: .875rem; }
+.submission-preview summary { margin-bottom: .35rem; cursor: pointer; }
+.submission-preview textarea { font: .8rem/1.35 var(--mono); }
+.submission-message { color: var(--muted); font-size: .8rem; }
 .print-sheet { display: none; }
 
 @container (min-width: 47rem) {

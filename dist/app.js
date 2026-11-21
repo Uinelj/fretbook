@@ -1,6 +1,7 @@
 import { chordVoicings, closeVoicings, estimateDifficulty, lookupChord, strings } from './chords.js';
 import { ChordPlayer, instruments } from './player.js';
 import { songbook } from './songbook.js';
+import { createSongbookIssue } from './submission.js';
 
 const $ = id => document.getElementById(id);
 const make = (tag, className = '', content = '') => {
@@ -118,7 +119,7 @@ function updateDifficultyDot(button, level) {
 
 function templateChart(template) {
   if (!templateCharts.has(template)) {
-    const chords = template.measures.flatMap(measure => {
+    const chords = template.chords ?? template.measures.flatMap(measure => {
       const names = measure.split(' ');
       return names.map((name, index) => ({ ...lookupChord(name), mode: 'lookup', beats: names.length === 3 ? (index === 0 ? 2 : 1) : beatsPerMeasure / names.length }));
     });
@@ -126,6 +127,13 @@ function templateChart(template) {
   }
   return templateCharts.get(template);
 }
+
+const songTemplate = song => songbook.find(entry => entry.id === song.templateId);
+const creditedAuthor = song => song.author?.trim() || songTemplate(song)?.credit || '';
+const chartSource = song => {
+  const source = song.source ?? songTemplate(song)?.source ?? '';
+  return /^https?:\/\//i.test(source) ? source : '';
+};
 
 function openSong(id) {
   songbookView = null;
@@ -276,17 +284,19 @@ function updateTitle() {
   const measures = Math.ceil(song.chords.reduce((total, chord) => total + chordBeats(chord), 0) / beatsPerMeasure);
   $('print-title').textContent = displayTitle(song);
   $('song-meta').textContent = count + (count === 1 ? ' chord' : ' chords') + ' · ' + measures + (measures === 1 ? ' measure' : ' measures');
-  const template = songbook.find(entry => entry.id === song.templateId);
+  const template = songTemplate(song);
+  const source = chartSource(song);
   const credit = $('song-credit');
-  credit.hidden = !template;
+  credit.hidden = !songbookView && !source;
   credit.replaceChildren();
-  if (template?.source) {
-    const link = make('a', '', template.credit);
-    link.href = template.source;
+  if (source) {
+    const link = make('a', '', songbookView ? creditedAuthor(song) : 'Source chart');
+    link.href = source;
     link.target = '_blank';
     link.rel = 'noopener';
-    credit.append(link, ' · ' + (template.arrangement ?? 'Guitar arrangement'));
-  } else if (template) credit.textContent = template.credit;
+    credit.append(link);
+    if (songbookView) credit.append(' · ' + (template?.arrangement ?? 'Guitar arrangement'));
+  } else if (songbookView) credit.textContent = creditedAuthor(song);
 }
 
 function cardAction(symbol, title, action, disabled = false) {
@@ -432,6 +442,7 @@ function renderCards() {
   updateMeasureSelection();
   $('print').disabled = chords.length === 0;
   $('play').disabled = chords.length === 0;
+  $('suggest-song').disabled = chords.length === 0;
   $('close-voicings').checked = Boolean(useCloseVoicings);
   $('close-voicings').disabled = !useCloseVoicings && (chords.length < 2 || !chords.some(chord => chord.mode === 'lookup'));
   $('reset-song-voicings').hidden = !useCloseVoicings && !chords.some(chord => chord.mode === 'lookup' && !sameFrets(lookupChord(chord.name)?.frets, chord.frets));
@@ -545,7 +556,7 @@ function renderPrintSheet() {
   const sheet = $('print-sheet');
   const header = make('header', 'print-heading');
   header.append(make('h1', '', displayTitle(song)));
-  const credit = $('song-credit').textContent;
+  const credit = songbookView ? $('song-credit').textContent : creditedAuthor(song);
   if (credit) header.append(make('p', 'print-credit', credit));
   header.append(make('p', 'print-meta', '4/4  ·  ' + currentTempo() + ' BPM  ·  Standard tuning E A D G B E'));
   sheet.replaceChildren(header);
@@ -649,11 +660,12 @@ function render() {
     if (item.dataset.template === songbookView?.templateId) item.setAttribute('aria-current', 'true');
     else item.removeAttribute('aria-current');
   }
-  for (const id of ['song-title', 'edit-title-label', 'rename-song', 'add-card', 'editor', 'workspace-footer']) $(id).hidden = browsing;
+  for (const id of ['song-title', 'edit-title-label', 'rename-song', 'song-byline', 'suggest-song', 'add-card', 'editor', 'workspace-footer']) $(id).hidden = browsing;
   $('print-title').classList.toggle('screen-title', browsing);
   $('copy-template').hidden = !browsing;
   $('copy-template-draft').hidden = !browsing || !state.songbookDrafts?.[songbookView.templateId];
   $('song-title').value = activeSong().title;
+  $('song-author').value = creditedAuthor(activeSong());
   $('tempo').value = activeSong().tempo ?? 92;
   $('instrument').value = activeSong().instrument ?? 'nylon';
   $('loop').checked = Boolean(activeSong().loop);
@@ -837,6 +849,10 @@ $('song-title').oninput = event => {
   save();
 };
 $('song-title').onkeydown = event => { if (event.key === 'Enter') event.target.blur(); };
+$('song-author').oninput = event => {
+  activeSong().author = event.target.value;
+  save();
+};
 $('rename-song').onclick = () => { $('song-title').focus(); $('song-title').select(); };
 $('copy-template').onclick = () => copyToLibrary(songbookView);
 $('copy-template-draft').onclick = () => copyToLibrary(state.songbookDrafts?.[songbookView?.templateId]);
@@ -846,6 +862,75 @@ $('new-song').onclick = () => {
   openSong(song.id);
   $('song-title').focus();
 };
+
+function prepareSubmission() {
+  const title = $('submission-title').value.trim();
+  const credit = $('submission-author').value.trim();
+  const source = $('submission-source').value.trim();
+  const slug = title.normalize('NFD').replace(/\p{Mark}/gu, '').toLowerCase().replace(/[^\p{Letter}\p{Number}]+/gu, '-').replace(/^-|-$/g, '');
+  const chart = {
+    id: 'community-' + (slug || 'chart'),
+    group: 'Community',
+    title,
+    credit,
+    ...(source ? { source } : {}),
+    tempo: currentTempo(),
+    instrument: $('instrument').value,
+    chords: activeSong().chords.map((chord, index) => ({
+      name: chord.name,
+      mode: chord.mode,
+      beats: chordBeats(chord),
+      frets: displayedVoicings[index]
+    }))
+  };
+  const draft = createSongbookIssue(chart, $('submission-notes').value.trim());
+  $('submission-form').action = draft.issueUrl;
+  $('submission-issue-title').value = draft.title;
+  $('submission-issue-body').value = draft.body;
+  $('submission-issue-body').disabled = draft.needsPaste;
+  $('submission-text').value = draft.body;
+  $('submission-needs-paste').hidden = !draft.needsPaste;
+  if (draft.needsPaste) $('submission-preview').open = true;
+}
+
+$('suggest-song').onclick = () => {
+  const song = activeSong();
+  $('submission-title').value = song.title;
+  $('submission-author').value = creditedAuthor(song);
+  $('submission-source').value = chartSource(song);
+  $('submission-notes').value = '';
+  $('submission-copy-status').textContent = '';
+  $('submission-preview').open = false;
+  prepareSubmission();
+  $('submission-dialog').showModal();
+};
+$('submission-form').oninput = () => {
+  $('submission-copy-status').textContent = '';
+  prepareSubmission();
+};
+$('submission-form').onsubmit = () => {
+  prepareSubmission();
+  const song = activeSong();
+  song.author = $('submission-author').value.trim();
+  song.source = $('submission-source').value.trim();
+  $('song-author').value = song.author;
+  updateTitle();
+  save();
+};
+$('copy-submission').onclick = async () => {
+  const text = $('submission-text');
+  const status = $('submission-copy-status');
+  try {
+    await navigator.clipboard.writeText(text.value);
+    status.textContent = 'Issue text copied.';
+  } catch {
+    text.focus();
+    text.select();
+    status.textContent = 'Issue text selected. Copy it to the clipboard.';
+  }
+};
+$('close-submission').onclick = () => $('submission-dialog').close();
+
 $('tempo').oninput = updateDifficulty;
 $('tempo').onchange = () => {
   if (playbackMode === 'playing' || playbackMode === 'loading') pausePlayback();

@@ -35,11 +35,13 @@
         <div class="title-block">
           <p class="eyebrow">GUITAR CHORD NOTEBOOK</p>
           <div class="title-row"><label class="sr-only" id="edit-title-label" for="song-title">Song title</label><h1 id="print-title"></h1><input id="song-title" maxlength="90" placeholder="Untitled song"><button id="rename-song" class="icon-button pencil" aria-label="Rename song" title="Rename song" type="button">✎</button></div>
+          <div class="song-byline" id="song-byline" hidden><label for="song-author">Author</label><input id="song-author" maxlength="110" placeholder="Author or composer" autocomplete="off"></div>
           <p class="song-credit" id="song-credit" hidden></p>
           <p class="song-meta" id="song-meta"></p>
         </div>
         <div class="song-header-actions">
           <button class="secondary print-button" id="print" type="button"><span class="printer" aria-hidden="true"></span> Print sheet</button>
+          <button class="secondary" id="suggest-song" type="button" hidden>Add to Songbook</button>
           <button class="add-card" id="copy-template" type="button" hidden>Copy to My Songs</button>
           <button class="text-button" id="copy-template-draft" type="button" hidden>Copy earlier edits</button>
         </div>
@@ -114,6 +116,32 @@
     <form method="dialog">
       <h2>Delete this song?</h2><p id="delete-description"></p>
       <div class="entry-actions"><button class="secondary" value="cancel" autofocus>Cancel</button><button class="primary" value="delete">Delete song</button></div>
+    </form>
+  </dialog>
+  <dialog class="submission-dialog" id="submission-dialog" aria-labelledby="submission-heading">
+    <form id="submission-form" method="get" target="_blank" rel="noopener noreferrer">
+      <h2 id="submission-heading">Add to Songbook</h2>
+      <p>Review and submit the chart as an issue on GitHub.</p>
+      <div class="submission-fields fields">
+        <label for="submission-title">Title for the Songbook</label>
+        <input id="submission-title" maxlength="90" required pattern=".*\S.*" autofocus>
+        <label for="submission-author">Author or composer</label>
+        <input id="submission-author" maxlength="110" placeholder="Use Traditional for an anonymous folk tune" required pattern=".*\S.*">
+        <label for="submission-source">Source link <span>(optional)</span></label>
+        <input id="submission-source" type="url" pattern="https?://.+" maxlength="350">
+        <label for="submission-notes">Notes for the reviewer <span>(optional)</span></label>
+        <textarea id="submission-notes" rows="2" maxlength="1500"></textarea>
+      </div>
+      <p id="submission-needs-paste" class="submission-message" hidden>This chart is too long to prefill. Copy the issue text below, then paste it into GitHub.</p>
+      <details class="submission-preview" id="submission-preview">
+        <summary>Preview issue text</summary>
+        <textarea id="submission-text" aria-label="Issue text" rows="6" readonly></textarea>
+        <button id="copy-submission" class="text-button" type="button">Copy issue text</button>
+        <span class="submission-message" id="submission-copy-status" role="status"></span>
+      </details>
+      <input name="title" id="submission-issue-title" type="hidden">
+      <input name="body" id="submission-issue-body" type="hidden">
+      <div class="entry-actions"><button class="secondary" id="close-submission" type="button">Close</button><button class="primary" type="submit">Open GitHub issue</button></div>
     </form>
   </dialog>
 </body>
