@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#ece6fa">
   <meta name="description" content="Build guitar chord progressions, write your own fingerings, and print chord sheets.">
   <title>Fretbook · Guitar chord notebook</title>
-  <link rel="stylesheet" href="style.css">
-  <script src="app.js" type="module"></script>
+  <link rel="stylesheet" href="style.css?v=playback-menus">
+  <script src="app.js?v=playback-menus" type="module"></script>
 </head>
 <body>
   <aside class="sidebar" aria-label="Song library">
@@ -67,8 +67,24 @@
           <p class="transport-status" id="playback-status" role="status" hidden></p>
         </div>
         <div class="transport-settings" role="group" aria-label="Playback settings">
-          <label class="transport-field" for="tempo">Tempo <span class="tempo-input"><input id="tempo" type="number" min="30" max="300" step="1" value="92"><span>BPM</span></span></label>
-          <label class="transport-field" for="instrument">Instrument <select id="instrument"></select></label>
+          <div class="transport-field">
+            <label for="tempo">Tempo</label>
+            <div class="setting-anchor tempo-anchor">
+              <div class="setting-control tempo-input">
+                <input id="tempo" type="number" inputmode="numeric" min="30" max="300" step="1" value="92" aria-describedby="tempo-unit">
+                <span id="tempo-unit">BPM</span>
+                <button class="setting-trigger tempo-trigger" id="tempo-presets" type="button" aria-label="Tempo presets" aria-haspopup="listbox" aria-expanded="false" aria-controls="tempo-menu"><span class="setting-chevron" aria-hidden="true"></span></button>
+              </div>
+              <div class="setting-menu" id="tempo-menu" role="listbox" aria-label="Tempo presets" hidden></div>
+            </div>
+          </div>
+          <div class="transport-field">
+            <span id="instrument-label">Instrument</span>
+            <div class="setting-anchor instrument-anchor">
+              <button class="setting-control setting-trigger instrument-trigger" id="instrument" type="button" value="nylon" aria-labelledby="instrument-label instrument-value" aria-haspopup="listbox" aria-expanded="false" aria-controls="instrument-menu"><span id="instrument-value">Nylon guitar</span><span class="setting-chevron" aria-hidden="true"></span></button>
+              <div class="setting-menu" id="instrument-menu" role="listbox" aria-labelledby="instrument-label" hidden></div>
+            </div>
+          </div>
           <div class="chart-settings"><span class="meter" aria-label="Time signature 4/4">4/4</span><span class="tuning">Standard tuning <span>E A D G B E</span></span></div>
         </div>
         <div class="cards" id="cards"></div>

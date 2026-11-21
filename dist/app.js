@@ -2,6 +2,7 @@ import { chordVoicings, closeVoicings, estimateDifficulty, lookupChord, strings 
 import { ChordPlayer, instruments } from './player.js';
 import { songbook } from './songbook.js';
 import { createSongbookIssue } from './submission.js';
+import { mountChoiceMenu } from './choice-menu.js';
 
 const $ = id => document.getElementById(id);
 const make = (tag, className = '', content = '') => {
@@ -649,6 +650,13 @@ function saveTempo() {
   return tempo;
 }
 
+function setInstrument(value) {
+  const selected = Object.hasOwn(instruments, value) ? value : 'nylon';
+  $('instrument').value = selected;
+  $('instrument').title = instruments[selected];
+  $('instrument-value').textContent = instruments[selected];
+}
+
 function updateCards() {
   renderCards();
   updateTitle();
@@ -670,7 +678,7 @@ function render() {
   $('song-title').value = activeSong().title;
   $('song-author').value = creditedAuthor(activeSong());
   $('tempo').value = activeSong().tempo ?? 92;
-  $('instrument').value = activeSong().instrument ?? 'nylon';
+  setInstrument(activeSong().instrument);
   $('loop').checked = Boolean(activeSong().loop);
   $('autoscroll').checked = Boolean(state.autoScroll);
   updateTitle();
@@ -948,11 +956,6 @@ $('autoscroll').onchange = event => {
   save();
   followPlayback();
 };
-$('instrument').onchange = event => {
-  if (playbackMode === 'playing' || playbackMode === 'loading') pausePlayback();
-  activeSong().instrument = event.target.value;
-  save();
-};
 async function startPlayback() {
   const request = ++playbackRequest;
   const sequence = currentSequence();
@@ -1006,11 +1009,17 @@ $('delete-dialog').onclose = () => {
     $('new-song').focus();
   }
 };
-for (const [value, label] of Object.entries(instruments)) {
-  const option = make('option', '', label);
-  option.value = value;
-  $('instrument').append(option);
-}
+const tempos = [60, 72, 84, 92, 100, 112, 120, 132, 144, 160];
+mountChoiceMenu($('tempo-presets'), $('tempo-menu'), tempos.map(tempo => [tempo, tempo + ' BPM']), currentTempo, tempo => {
+  $('tempo').value = tempo;
+  $('tempo').dispatchEvent(new Event('change'));
+});
+mountChoiceMenu($('instrument'), $('instrument-menu'), Object.entries(instruments), () => $('instrument').value, value => {
+  if (playbackMode === 'playing' || playbackMode === 'loading') pausePlayback();
+  setInstrument(value);
+  activeSong().instrument = value;
+  save();
+});
 restoreView();
 renderSongbook();
 $('songbook-search').oninput = renderSongbook;
