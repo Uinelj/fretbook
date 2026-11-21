@@ -302,7 +302,7 @@ dialog::backdrop { background: #35203f80; }
   .stop-label { display: none; }
   .transport-readout { font-size: .73rem; }
   #transport-total { display: none; }
-  .transport-settings { display: grid; grid-template-columns: minmax(max-content, .65fr) minmax(0, 1.35fr); column-gap: .55rem; padding: .38rem .52rem .46rem; }
+  .transport-settings { display: grid; grid-template-columns: minmax(5.25rem, .65fr) minmax(0, 1.35fr); column-gap: .55rem; padding: .38rem .52rem .46rem; }
   .transport-field { display: grid; gap: .23rem; }
   .transport-settings select { width: 100%; }
   .chart-settings { grid-column: 1 / -1; padding-top: .33rem; border-top: 1px solid #eaddeb; }
