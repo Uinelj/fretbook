@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#19372e">
+  <meta name="description" content="Build guitar chord progressions, write your own fingerings, and print chord sheets.">
+  <title>Fretbook · Guitar chord notebook</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" type="module"></script>
+</head>
+<body>
+  <aside class="sidebar" aria-label="Song library">
+    <div class="brand"><span class="logo" aria-hidden="true"><i></i><i></i><i></i></span><span>Fretbook</span></div>
+    <button class="new-song" id="new-song" type="button"><span aria-hidden="true">＋</span> New song</button>
+    <details id="library" open>
+      <summary>Song library</summary>
+      <nav id="songs" aria-label="Songs"></nav>
+    </details>
+    <div class="library-footer"><span class="device" aria-hidden="true">◉</span><span>Stored on this device</span></div>
+  </aside>
+  <main>
+    <div class="workspace">
+      <header class="song-header">
+        <div class="title-block">
+          <p class="eyebrow">GUITAR CHORD NOTEBOOK</p>
+          <div class="title-row"><label class="sr-only" for="song-title">Song title</label><h1 id="print-title"></h1><input id="song-title" maxlength="90" placeholder="Untitled song"><button id="rename-song" class="icon-button pencil" aria-label="Rename song" title="Rename song" type="button">✎</button></div>
+          <p class="song-meta" id="song-meta"></p>
+        </div>
+        <button class="secondary print-button" id="print" type="button"><span class="printer" aria-hidden="true"></span> Print sheet</button>
+      </header>
+      <section class="progression" aria-labelledby="progression-title">
+        <div class="section-header"><h2 id="progression-title">Chord progression</h2><span class="tuning">STANDARD TUNING <span>E A D G B E</span></span></div>
+        <div class="cards" id="cards"></div>
+      </section>
+      <section class="editor" aria-labelledby="editor-title" id="editor">
+        <div class="editor-heading"><span class="editor-icon" aria-hidden="true">＋</span><div><h2 id="editor-title">Add a chord</h2><p>Look up a chord or enter your own fingering.</p></div></div>
+        <div class="tabs" aria-label="Chord entry method">
+          <button id="lookup-tab" type="button" aria-pressed="true">Chord name</button>
+          <button id="custom-tab" type="button" aria-pressed="false">Custom fingering</button>
+        </div>
+        <form id="chord-form">
+          <div class="entry">
+            <div class="fields">
+              <label for="chord-name" id="chord-label">Chord name</label>
+              <input id="chord-name" maxlength="40" placeholder="e.g. Cm7" autocomplete="off" autocapitalize="off" spellcheck="false">
+              <div id="lookup-tip" class="field-tip">Try <button type="button" data-example="Cm7">Cm7</button> <button type="button" data-example="D/F#">D/F#</button> <button type="button" data-example="Asus4">Asus4</button></div>
+              <div id="custom-fields" hidden>
+                <fieldset><legend>Frets from low E to high E</legend><div id="strings" class="strings"></div></fieldset>
+                <p class="field-tip">Use <strong>x</strong> to mute a string and <strong>0</strong> to play it open.</p>
+              </div>
+              <p id="chord-error" class="error" role="status" hidden></p>
+            </div>
+            <div id="preview" class="preview" hidden></div>
+          </div>
+          <div class="entry-actions"><button class="primary" id="submit-chord" type="submit">Add to progression</button><button class="secondary" id="cancel-edit" type="button" hidden>Cancel</button></div>
+        </form>
+      </section>
+      <footer class="workspace-footer"><span id="save-status" role="status">✓ &nbsp; All changes saved locally</span><button type="button" id="delete-song">Delete song</button></footer>
+    </div>
+  </main>
+  <dialog id="delete-dialog">
+    <form method="dialog">
+      <h2>Delete this song?</h2><p id="delete-description"></p>
+      <div class="entry-actions"><button class="secondary" value="cancel" autofocus>Cancel</button><button class="primary" value="delete">Delete song</button></div>
+    </form>
+  </dialog>
+</body>
+</html>
