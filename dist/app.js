@@ -439,6 +439,9 @@ function renderCards() {
   });
   if (selectedMeasure !== null && selectedMeasure >= measureButtons.length) selectedMeasure = null;
   playbackPosition = (selectedMeasure ?? 0) * beatsPerMeasure;
+  $('transport-timeline').hidden = !measureButtons.length;
+  $('transport-total').textContent = 'of ' + measureButtons.length;
+  $('transport-progress').max = elapsed || 1;
   updateMeasureSelection();
   $('print').disabled = chords.length === 0;
   $('play').disabled = chords.length === 0;
@@ -476,9 +479,9 @@ function highlightBeat(beat) {
 function updateTransportPosition() {
   const position = $('transport-position');
   const measure = playbackMode === 'stopped' ? selectedMeasure : Math.floor(playbackPosition / beatsPerMeasure);
-  position.hidden = measure === null;
-  const text = measure === null ? '' : (playbackMode === 'stopped' ? 'From measure ' : 'Measure ') + (measure + 1);
+  const text = 'Measure ' + ((measure ?? 0) + 1);
   if (position.textContent !== text) position.textContent = text;
+  $('transport-progress').value = playbackPosition;
 }
 
 function followPlayback() {
@@ -514,8 +517,8 @@ function setPlaybackMode(mode, message = '') {
   icon.setAttribute('aria-hidden', 'true');
   $('play').replaceChildren(icon, document.createTextNode(' ' + text));
   const stop = $('stop');
-  stop.hidden = mode === 'stopped';
-  if (stop.hidden && document.activeElement === stop) $('play').focus({ preventScroll: true });
+  if (mode === 'stopped' && document.activeElement === stop) $('play').focus({ preventScroll: true });
+  stop.disabled = mode === 'stopped';
   $('playback-status').textContent = message;
   $('playback-status').hidden = !message;
   updateTransportPosition();
@@ -969,6 +972,7 @@ async function startPlayback() {
       },
       onBeat: beat => {
         playbackPosition = beat;
+        $('transport-progress').value = beat;
         highlightBeat(beat);
       },
       onEnd: stopPlayback

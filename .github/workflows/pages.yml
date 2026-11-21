@@ -1,11 +1,7 @@
 name: Deploy Fretbook
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'dist/**'
-      - '.github/workflows/pages.yml'
+  # Pages builds from main automatically while the repository uses a branch source.
   workflow_dispatch:
 
 permissions:

@@ -49,18 +49,27 @@
       <section class="progression" aria-labelledby="progression-title">
         <div class="section-header">
           <h2 id="progression-title">Chord progression</h2>
-          <div class="chart-settings"><span class="meter" aria-label="Time signature 4/4">4/4</span><span class="tuning">Standard tuning <span>E A D G B E</span></span></div>
         </div>
-        <div class="transport" id="transport" aria-label="Playback controls">
-          <button class="primary play-button" id="play" type="button"><span aria-hidden="true">▶</span> Play</button>
-          <button class="secondary stop-button" id="stop" type="button" hidden>Stop</button>
-          <label class="loop-toggle" for="loop"><input id="loop" type="checkbox" aria-label="Loop progression"> Loop</label>
-          <label class="loop-toggle" for="autoscroll"><input id="autoscroll" type="checkbox"> Auto-scroll</label>
+        <div class="transport" id="transport" role="group" aria-label="Playback controls">
+          <div class="transport-buttons">
+            <button class="primary play-button" id="play" type="button"><span aria-hidden="true">▶</span> Play</button>
+            <button class="secondary stop-button" id="stop" type="button" aria-label="Stop" title="Stop" disabled><span aria-hidden="true">■</span><span class="stop-label">Stop</span></button>
+          </div>
+          <div class="transport-timeline" id="transport-timeline" hidden>
+            <div class="transport-readout"><span id="transport-position"></span><span id="transport-total"></span></div>
+            <progress id="transport-progress" value="0" max="1" aria-label="Playback position"></progress>
+          </div>
+          <div class="transport-options">
+            <label class="loop-toggle" for="loop"><input id="loop" type="checkbox" aria-label="Loop progression"> Loop</label>
+            <label class="loop-toggle" for="autoscroll"><input id="autoscroll" type="checkbox"> Auto-scroll</label>
+          </div>
+          <span class="difficulty" id="difficulty" title="Estimated from the tempo, the time between chord changes, and the displayed fingerings" role="status" hidden><span>Difficulty</span><strong id="difficulty-level"></strong></span>
+          <p class="transport-status" id="playback-status" role="status" hidden></p>
+        </div>
+        <div class="transport-settings" role="group" aria-label="Playback settings">
           <label class="transport-field" for="tempo">Tempo <span class="tempo-input"><input id="tempo" type="number" min="30" max="300" step="1" value="92"><span>BPM</span></span></label>
           <label class="transport-field" for="instrument">Instrument <select id="instrument"></select></label>
-          <span class="transport-position" id="transport-position" hidden></span>
-          <span class="difficulty" id="difficulty" title="Estimated from the tempo, the time between chord changes, and the displayed fingerings" role="status" hidden>Difficulty <strong id="difficulty-level"></strong></span>
-          <p class="transport-status" id="playback-status" role="status" hidden></p>
+          <div class="chart-settings"><span class="meter" aria-label="Time signature 4/4">4/4</span><span class="tuning">Standard tuning <span>E A D G B E</span></span></div>
         </div>
         <div class="cards" id="cards"></div>
         <div class="progression-actions">
