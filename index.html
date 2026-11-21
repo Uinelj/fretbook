@@ -1,0 +1,5 @@
+---
+layout: none
+---
+{%- capture app -%}{% include_relative dist/index.html %}{%- endcapture -%}
+{{- app | replace: '<head>', '<head><base href="./dist/">' -}}
