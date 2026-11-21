@@ -45,7 +45,10 @@ let draftVoicingChanged = false;
 let displayedVoicings = [];
 let playbackSegments = [];
 let highlighted;
-let playing = false;
+let measureButtons = [];
+let selectedMeasure = null;
+let playbackPosition = 0;
+let playbackMode = 'stopped';
 let playbackRequest = 0;
 const player = new ChordPlayer();
 const templateCharts = new WeakMap();
@@ -392,6 +395,7 @@ function renderCards() {
   const { chords, closeVoicings: useCloseVoicings } = activeSong();
   displayedVoicings = useCloseVoicings ? closeVoicings(chords) : chords.map(chord => chord.frets);
   playbackSegments = [];
+  measureButtons = [];
   container.replaceChildren();
   let elapsed = 0;
   chartMeasures(chords).forEach((parts, measureIndex) => {
@@ -399,9 +403,19 @@ function renderCards() {
     const header = make('div', 'measure-header');
     const track = make('div', 'beat-track');
     track.setAttribute('aria-hidden', 'true');
-    header.append(make('h3', '', 'Measure ' + (measureIndex + 1)), track);
+    const heading = make('h3');
+    const seek = make('button', 'measure-start', 'Measure ' + (measureIndex + 1));
+    seek.type = 'button';
+    seek.title = 'Set the playback position here';
+    seek.onclick = () => seekMeasure(measureIndex);
+    measureButtons.push(seek);
+    heading.append(seek);
+    header.append(heading, track);
     const grid = make('div', 'measure-grid');
     measure.append(header, grid);
+    measure.onclick = event => {
+      if (!event.target.closest('button')) seekMeasure(measureIndex);
+    };
     container.append(measure);
     for (const { index, beats, continued, continues } of parts) {
       const segment = make('span', continued ? 'beat-segment held' : 'beat-segment');
@@ -410,9 +424,12 @@ function renderCards() {
       const card = renderChord(chords[index], index, beats, continued, continues);
       grid.append(card);
       elapsed += beats;
-      playbackSegments.push({ end: elapsed, card, segment });
+      playbackSegments.push({ end: elapsed, card, segment, measure });
     }
   });
+  if (selectedMeasure !== null && selectedMeasure >= measureButtons.length) selectedMeasure = null;
+  playbackPosition = (selectedMeasure ?? 0) * beatsPerMeasure;
+  updateMeasureSelection();
   $('print').disabled = chords.length === 0;
   $('play').disabled = chords.length === 0;
   $('close-voicings').checked = Boolean(useCloseVoicings);
@@ -441,22 +458,72 @@ function highlightBeat(beat) {
     next.card.setAttribute('aria-current', 'true');
   }
   highlighted = next;
+  updateTransportPosition();
+  followPlayback();
 }
 
-function playbackButton(active, message = '') {
-  playing = active;
-  const icon = make('span', '', active ? '■' : '▶');
+function updateTransportPosition() {
+  const position = $('transport-position');
+  const measure = playbackMode === 'stopped' ? selectedMeasure : Math.floor(playbackPosition / beatsPerMeasure);
+  position.hidden = measure === null;
+  const text = measure === null ? '' : (playbackMode === 'stopped' ? 'From measure ' : 'Measure ') + (measure + 1);
+  if (position.textContent !== text) position.textContent = text;
+}
+
+function followPlayback() {
+  if (!$('autoscroll').checked || playbackMode !== 'playing' || !highlighted) return;
+  const top = Math.max(0, $('transport').getBoundingClientRect().bottom) + 8;
+  const bottom = window.innerHeight - 8;
+  let bounds = highlighted.measure.getBoundingClientRect();
+  if (bounds.height > bottom - top) bounds = highlighted.card.getBoundingClientRect();
+  const distance = bounds.top < top ? bounds.top - top : Math.max(0, bounds.bottom - bottom);
+  if (Math.abs(distance) > 2) {
+    window.scrollBy({ top: distance, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+  }
+}
+
+function updateMeasureSelection() {
+  measureButtons.forEach((button, index) => button.setAttribute('aria-pressed', String(index === selectedMeasure)));
+  updateTransportPosition();
+}
+
+function seekMeasure(index) {
+  selectedMeasure = index;
+  playbackPosition = index * beatsPerMeasure;
+  updateMeasureSelection();
+  if (playbackMode === 'playing' || playbackMode === 'loading') startPlayback();
+  else if (playbackMode === 'paused') highlightBeat(playbackPosition);
+}
+
+function setPlaybackMode(mode, message = '') {
+  playbackMode = mode;
+  const running = mode === 'playing' || mode === 'loading';
+  const text = running ? 'Pause' : mode === 'paused' ? 'Resume' : 'Play';
+  const icon = make('span', '', running ? 'Ⅱ' : '▶');
   icon.setAttribute('aria-hidden', 'true');
-  $('play').replaceChildren(icon, document.createTextNode(active ? ' Stop' : ' Play'));
+  $('play').replaceChildren(icon, document.createTextNode(' ' + text));
+  const stop = $('stop');
+  stop.hidden = mode === 'stopped';
+  if (stop.hidden && document.activeElement === stop) $('play').focus({ preventScroll: true });
   $('playback-status').textContent = message;
   $('playback-status').hidden = !message;
+  updateTransportPosition();
 }
 
 function stopPlayback() {
   playbackRequest += 1;
   player.stop();
+  playbackPosition = (selectedMeasure ?? 0) * beatsPerMeasure;
+  setPlaybackMode('stopped');
   highlightBeat(Infinity);
-  playbackButton(false);
+}
+
+function pausePlayback() {
+  playbackRequest += 1;
+  playbackPosition = player.position ?? playbackPosition;
+  player.stop();
+  setPlaybackMode('paused');
+  highlightBeat(playbackPosition);
 }
 
 function currentTempo() {
@@ -576,6 +643,7 @@ function updateCards() {
 
 function render() {
   const browsing = Boolean(songbookView);
+  selectedMeasure = null;
   renderLibrary();
   for (const item of $('templates').querySelectorAll('[data-template]')) {
     if (item.dataset.template === songbookView?.templateId) item.setAttribute('aria-current', 'true');
@@ -589,6 +657,7 @@ function render() {
   $('tempo').value = activeSong().tempo ?? 92;
   $('instrument').value = activeSong().instrument ?? 'nylon';
   $('loop').checked = Boolean(activeSong().loop);
+  $('autoscroll').checked = Boolean(state.autoScroll);
   updateTitle();
   renderCards();
 }
@@ -778,37 +847,58 @@ $('new-song').onclick = () => {
   $('song-title').focus();
 };
 $('tempo').oninput = updateDifficulty;
-$('tempo').onchange = () => { stopPlayback(); saveTempo(); };
+$('tempo').onchange = () => {
+  if (playbackMode === 'playing' || playbackMode === 'loading') pausePlayback();
+  saveTempo();
+};
 $('loop').onchange = event => {
   activeSong().loop = event.target.checked;
   save();
 };
+$('autoscroll').onchange = event => {
+  state.autoScroll = event.target.checked;
+  save();
+  followPlayback();
+};
 $('instrument').onchange = event => {
-  stopPlayback();
+  if (playbackMode === 'playing' || playbackMode === 'loading') pausePlayback();
   activeSong().instrument = event.target.value;
   save();
 };
-$('play').onclick = async () => {
-  if (playing) return stopPlayback();
+async function startPlayback() {
   const request = ++playbackRequest;
   const sequence = currentSequence();
   const tempo = saveTempo();
-  playbackButton(true, 'Loading instrument…');
+  const startBeat = playbackPosition;
+  setPlaybackMode('loading', 'Loading instrument…');
+  highlightBeat(startBeat);
   try {
     await player.play(sequence, {
       tempo,
       instrument: $('instrument').value,
+      startBeat,
       isLooping: () => $('loop').checked,
-      onStart: () => playbackButton(true),
-      onBeat: highlightBeat,
+      onStart: () => {
+        setPlaybackMode('playing');
+        followPlayback();
+      },
+      onBeat: beat => {
+        playbackPosition = beat;
+        highlightBeat(beat);
+      },
       onEnd: stopPlayback
     });
   } catch {
     if (request !== playbackRequest) return;
     stopPlayback();
-    playbackButton(false, 'Could not load the instrument. Try playing again.');
+    setPlaybackMode('stopped', 'Could not load the instrument. Try playing again.');
   }
+}
+$('play').onclick = () => {
+  if (playbackMode === 'playing' || playbackMode === 'loading') pausePlayback();
+  else startPlayback();
 };
+$('stop').onclick = stopPlayback;
 $('print').onclick = () => window.print();
 addEventListener('beforeprint', renderPrintSheet);
 $('delete-song').onclick = () => {

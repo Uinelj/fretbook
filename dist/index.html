@@ -49,11 +49,14 @@
           <h2 id="progression-title">Chord progression</h2>
           <div class="chart-settings"><span class="meter" aria-label="Time signature 4/4">4/4</span><span class="tuning">Standard tuning <span>E A D G B E</span></span></div>
         </div>
-        <div class="transport" aria-label="Playback controls">
+        <div class="transport" id="transport" aria-label="Playback controls">
           <button class="primary play-button" id="play" type="button"><span aria-hidden="true">▶</span> Play</button>
+          <button class="secondary stop-button" id="stop" type="button" hidden>Stop</button>
           <label class="loop-toggle" for="loop"><input id="loop" type="checkbox" aria-label="Loop progression"> Loop</label>
+          <label class="loop-toggle" for="autoscroll"><input id="autoscroll" type="checkbox"> Auto-scroll</label>
           <label class="transport-field" for="tempo">Tempo <span class="tempo-input"><input id="tempo" type="number" min="30" max="300" step="1" value="92"><span>BPM</span></span></label>
           <label class="transport-field" for="instrument">Instrument <select id="instrument"></select></label>
+          <span class="transport-position" id="transport-position" hidden></span>
           <span class="difficulty" id="difficulty" title="Estimated from the tempo, the time between chord changes, and the displayed fingerings" role="status" hidden>Difficulty <strong id="difficulty-level"></strong></span>
           <p class="transport-status" id="playback-status" role="status" hidden></p>
         </div>

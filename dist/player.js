@@ -16,6 +16,9 @@ export class ChordPlayer {
   #timer;
   #frame;
   #run = 0;
+  #readBeat;
+
+  get position() { return this.#readBeat?.(); }
 
   async #load(instrument) {
     if (!this.#instruments.has(instrument)) {
@@ -35,7 +38,7 @@ export class ChordPlayer {
     return this.#instruments.get(instrument);
   }
 
-  async play(sequence, { tempo, instrument, isLooping = () => false, onStart, onBeat, onEnd }) {
+  async play(sequence, { tempo, instrument, startBeat = 0, isLooping = () => false, onStart, onBeat, onEnd }) {
     this.stop();
     if (!sequence.length) { onEnd(); return; }
     const run = this.#run;
@@ -50,6 +53,12 @@ export class ChordPlayer {
     let completedPasses = 0;
     const totalBeats = sequence.reduce((total, chord) => total + chord.beats, 0);
     const passSeconds = totalBeats * secondsPerBeat;
+    const initialBeat = Math.min(Math.max(0, startBeat), totalBeats - .001);
+    let offsetBeats = initialBeat;
+    while (offsetBeats >= sequence[index].beats) offsetBeats -= sequence[index++].beats;
+    const clockBeat = () => initialBeat + Math.max(0, this.#context.currentTime - startsAt) / secondsPerBeat;
+    const endBeat = () => (completedPasses + 1) * totalBeats;
+    this.#readBeat = () => Math.max(0, Math.min(clockBeat(), endBeat() - .001)) % totalBeats;
 
     const schedule = () => {
       const now = this.#context.currentTime;
@@ -64,30 +73,30 @@ export class ChordPlayer {
         }
         const chord = sequence[index++];
         const start = Math.max(nextTime, now);
-        nextTime += chord.beats * secondsPerBeat;
+        const age = offsetBeats * secondsPerBeat + start - nextTime;
+        nextTime += (chord.beats - offsetBeats) * secondsPerBeat;
+        offsetBeats = 0;
         const duration = nextTime - start;
         if (duration < .035) continue;
-        const strum = instrument === 'keys' ? 0 : Math.min(.012, duration / 14);
+        const strum = instrument === 'keys' || age > .001 ? 0 : Math.min(.012, duration / 14);
         let offset = 0;
         chord.frets.forEach((fret, string) => {
           if (fret < 0) return;
           const midi = tuning[string] + fret;
           const sample = nearestSample(midi);
-          this.#note(samples.get(sample), midi - sample, start + offset, duration - offset);
+          this.#note(samples.get(sample), midi - sample, start + offset, duration - offset, age);
           offset += strum;
         });
       }
     };
 
     const draw = () => {
-      const beat = (this.#context.currentTime - startsAt) / secondsPerBeat;
-      const end = (completedPasses + 1) * totalBeats;
-      if (beat >= end + .12 / secondsPerBeat && !isLooping()) {
+      if (clockBeat() >= endBeat() + .12 / secondsPerBeat && !isLooping()) {
         this.stop();
         onEnd();
         return;
       }
-      onBeat(Math.max(0, Math.min(beat, end - .001)) % totalBeats);
+      onBeat(this.position);
       this.#frame = requestAnimationFrame(draw);
     };
 
@@ -97,12 +106,15 @@ export class ChordPlayer {
     draw();
   }
 
-  #note(buffer, transpose, start, duration) {
+  #note(buffer, transpose, start, duration, age) {
     const context = this.#context;
+    const rate = 2 ** (transpose / 12);
+    const offset = age * rate;
+    if (offset >= buffer.duration) return;
     const source = context.createBufferSource();
     const gain = context.createGain();
     source.buffer = buffer;
-    source.playbackRate.value = 2 ** (transpose / 12);
+    source.playbackRate.value = rate;
     source.connect(gain).connect(context.destination);
     gain.gain.setValueAtTime(.0001, start);
     gain.gain.linearRampToValueAtTime(.145, start + .006);
@@ -114,12 +126,13 @@ export class ChordPlayer {
       source.disconnect();
       gain.disconnect();
     };
-    source.start(start);
+    source.start(start, offset);
     source.stop(start + duration + .1);
   }
 
   stop() {
     this.#run += 1;
+    this.#readBeat = null;
     clearInterval(this.#timer);
     cancelAnimationFrame(this.#frame);
     for (const source of this.#pending) source.stop();
